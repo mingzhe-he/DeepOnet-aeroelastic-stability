@@ -1,0 +1,40 @@
+experiment_name: "tier1_lightgbm"
+output_dir: "experiments/tier1_lightgbm/results"
+data_path: "data/processed/summary.parquet"
+split_path: "data/splits/aoa_interpolation.json"
+
+features:
+  mandatory:
+    - "H_over_D"
+    - "Re_star"
+    - "aoa_rad"
+    - "sin_aoa"
+    - "cos_aoa"
+    - "aoa_deg2" # Will be created
+    - "sin_2aoa" # Will be created
+  optional:
+    - "shape_type" # Categorical
+
+targets:
+  - "St_peak"
+  - "mean_Cl"
+  - "mean_Cd"
+  - "mean_Cm"
+  - "std_Cl"
+
+training:
+  n_folds: 5
+  params:
+    objective: "regression"
+    metric: "rmse"
+    boosting_type: "gbdt"
+    num_leaves: 31
+    learning_rate: 0.05
+    feature_fraction: 0.9
+    bagging_fraction: 0.8
+    bagging_freq: 5
+    verbose: -1
+    n_estimators: 1000 # Used in sklearn API
+    early_stopping_rounds: 50
+
+device: "cpu" # LightGBM on CPU is fast enough

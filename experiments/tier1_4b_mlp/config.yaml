@@ -1,0 +1,36 @@
+experiment_name: "tier1_mlp_derivative"
+output_dir: "experiments/tier1_4b_mlp/results"
+data_path: "data/processed/summary.parquet"
+split_path: "data/splits/aoa_interpolation.json"
+
+features:
+  geometry: ["H_over_D"]
+  flow: ["Re"] # Will be converted to Re_star
+  angle: ["aoa_rad"] # Will be used to generate aoa0_rad
+
+targets:
+  - "St_peak"
+  - "mean_Cl"
+  - "mean_Cd"
+  - "mean_Cm"
+
+derivative:
+  target: "mean_Cl"
+  wrt: "aoa0_rad"
+  lambda_deriv: 0.2
+  lambda_curvature: 0.0
+
+model:
+  hidden_dims: [64, 64, 32]
+  activation: "tanh" # Tanh is better for derivatives
+  dropout: 0.0
+  batch_norm: false # Batch norm can mess up derivatives sometimes, but can be used. Let's try without first.
+
+training:
+  batch_size: 32
+  epochs: 2000
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-5
+  patience: 100
+
+device: "auto"

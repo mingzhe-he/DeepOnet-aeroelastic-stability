@@ -1,0 +1,35 @@
+experiment_name: "tier1_improved_mlp"
+output_dir: "experiments/tier1_improved/results"
+data_path: "data/processed/summary.parquet"
+split_path: "data/splits/aoa_interpolation.json"
+
+features:
+  geometry: ["H_over_D"]
+  flow: ["Re"] # Will be converted to Re_star
+  angle: ["aoa_rad"] # Will be used to generate sin/cos/aoa0
+
+targets:
+  - "St_peak"
+  - "mean_Cl"
+  - "mean_Cd"
+  - "mean_Cm"
+  - "A_peak" # psd_peak
+  # Q and bandwidth can be added if available in summary
+
+model:
+  type: "mlp_ensemble"
+  n_models: 5
+  hidden_dims: [128, 128, 64]
+  dropout: 0.1
+  activation: "relu"
+  use_batch_norm: true
+
+training:
+  batch_size: 32
+  epochs: 1000
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-4
+  patience: 50
+  loss_weighting: "inverse_var" # "none", "inverse_var", "manual"
+
+device: "auto" # "auto", "cuda", "mps", "cpu"

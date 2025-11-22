@@ -1,0 +1,41 @@
+# Tier 1 Baseline Experiment Configuration
+
+# Data paths
+data_path: "data/processed/summary.parquet"
+split_path: "data/splits/aoa_interpolation.json"
+output_dir: "experiments/tier1_baseline/results"
+
+# Features and targets
+feature_cols:
+  - D
+  - H
+  - H_over_D
+  - Re
+  - sin_aoa
+  - cos_aoa
+
+target_cols:
+  - St_peak
+  - A_peak
+  - Q
+  - mean_Cd
+  - mean_Cl
+  - mean_Cm
+
+# MLP hyperparameters
+hidden_dims: [64, 64, 32]
+activation: "relu"
+dropout: 0.1
+batch_norm: true
+
+# Training parameters
+n_epochs: 500
+batch_size: 32
+learning_rate: 0.001
+patience: 50
+
+# Baseline models
+ridge_alpha: 1.0
+
+# Random seed
+random_seed: 42

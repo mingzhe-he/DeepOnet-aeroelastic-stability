@@ -1,0 +1,47 @@
+{
+  "metrics": {
+    "mean_Cl": {
+      "R2": -0.017155777899533264,
+      "RMSE": 2.2545748493393147
+    },
+    "mean_Cd": {
+      "R2": -0.00026316002630699664,
+      "RMSE": 1.5692028639015054
+    },
+    "St_peak": {
+      "R2": 0.24627300031453203,
+      "RMSE": 0.08386526153816015
+    }
+  },
+  "config": {
+    "experiment_name": "tier1_rom",
+    "output_dir": "experiments/tier1_rom/results",
+    "data_path": "data/processed/summary.parquet",
+    "split_path": "data/splits/aoa_interpolation.json",
+    "features": {
+      "rom_a": [
+        "H_over_D",
+        "aoa_rad"
+      ],
+      "rom_b": [
+        "H_over_D",
+        "aoa_rad",
+        "Re_star"
+      ]
+    },
+    "galloping_gp": {
+      "kernel": "RBF",
+      "noise_level": 1e-05,
+      "n_restarts": 5
+    },
+    "shedding_model": {
+      "n_regimes": 2,
+      "classifier": "random_forest",
+      "regressor": "gp"
+    },
+    "training": {
+      "variant": "rom_b"
+    },
+    "device": "cpu"
+  }
+}

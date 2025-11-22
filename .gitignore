@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# IDE
+
+.idea/
+*.swp
+*.swo
+*~
+
+# Data files (except splits for reproducibility)
+data/raw/
+data/processed/*.h5
+data/processed/*.hdf5
+data/processed/*.parquet
+!data/splits/
+
+# Experiment results (keep configs)
+# experiments/*/results/
+experiments/*/checkpoints/
+!experiments/*/config.yaml
+
+# Reports
+reports/figures/*.png
+reports/figures/*.pdf
+reports/logs/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/

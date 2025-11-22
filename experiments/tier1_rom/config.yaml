@@ -1,0 +1,23 @@
+experiment_name: "tier1_rom"
+output_dir: "experiments/tier1_rom/results"
+data_path: "data/processed/summary.parquet"
+split_path: "data/splits/aoa_interpolation.json"
+
+features:
+  rom_a: ["H_over_D", "aoa_rad"]
+  rom_b: ["H_over_D", "aoa_rad", "Re_star"]
+
+galloping_gp:
+  kernel: "RBF"
+  noise_level: 1.0e-5
+  n_restarts: 5
+
+shedding_model:
+  n_regimes: 2
+  classifier: "random_forest"
+  regressor: "gp" # or "ridge"
+
+training:
+  variant: "rom_b" # Use Re_star by default
+
+device: "cpu" # GPs usually run on CPU via sklearn

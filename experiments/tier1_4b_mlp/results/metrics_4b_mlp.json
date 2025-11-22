@@ -1,0 +1,71 @@
+{
+  "metrics": {
+    "St_peak": {
+      "R2": -1.4156835079193115,
+      "RMSE": 0.1501395433263673
+    },
+    "mean_Cl": {
+      "R2": 0.4030061960220337,
+      "RMSE": 1.727252528880172
+    },
+    "mean_Cd": {
+      "R2": -0.9566632509231567,
+      "RMSE": 2.1947244419930576
+    },
+    "mean_Cm": {
+      "R2": -0.5169724225997925,
+      "RMSE": 0.7787990653193566
+    },
+    "derivative": {
+      "R2": 0.033077776432037354,
+      "RMSE": 6.31829145297727
+    }
+  },
+  "config": {
+    "experiment_name": "tier1_mlp_derivative",
+    "output_dir": "experiments/tier1_4b_mlp/results",
+    "data_path": "data/processed/summary.parquet",
+    "split_path": "data/splits/aoa_interpolation.json",
+    "features": {
+      "geometry": [
+        "H_over_D"
+      ],
+      "flow": [
+        "Re"
+      ],
+      "angle": [
+        "aoa_rad"
+      ]
+    },
+    "targets": [
+      "St_peak",
+      "mean_Cl",
+      "mean_Cd",
+      "mean_Cm"
+    ],
+    "derivative": {
+      "target": "mean_Cl",
+      "wrt": "aoa0_rad",
+      "lambda_deriv": 0.2,
+      "lambda_curvature": 0.0
+    },
+    "model": {
+      "hidden_dims": [
+        64,
+        64,
+        32
+      ],
+      "activation": "tanh",
+      "dropout": 0.0,
+      "batch_norm": false
+    },
+    "training": {
+      "batch_size": 32,
+      "epochs": 2000,
+      "learning_rate": 0.001,
+      "weight_decay": 1e-05,
+      "patience": 100
+    },
+    "device": "auto"
+  }
+}
