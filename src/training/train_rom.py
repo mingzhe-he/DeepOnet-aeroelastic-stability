@@ -14,6 +14,8 @@ from src.data.splits import load_split
 def main():
     parser = argparse.ArgumentParser(description="Train Tier 1 ROM")
     parser.add_argument("--config", type=str, required=True, help="Path to config yaml")
+    parser.add_argument("--design-only", action="store_true", help="Train only on design velocity")
+    parser.add_argument("--split-path", type=str, default=None, help="Override split path")
     args = parser.parse_args()
     
     with open(args.config, 'r') as f:
@@ -24,7 +26,17 @@ def main():
     
     # Load data
     df = pd.read_parquet(config['data_path'])
-    split = load_split(Path(config['split_path']))
+    
+    design_indices = None
+    if args.design_only:
+        print("Filtering for design velocity (U ~ 21.5 m/s)...")
+        design_indices = df[df['U_ref'] > 20.0].index.tolist()
+        print(f"Design velocity cases: {len(design_indices)}")
+        
+    if args.split_path:
+        split = load_split(Path(args.split_path))
+    else:
+        split = load_split(Path(config['split_path']))
     
     # Feature Engineering
     df['Re_star'] = np.log10(df['Re'] / 1e6)
@@ -34,14 +46,23 @@ def main():
     # Select features
     variant = config['training']['variant']
     feature_cols = config['features'][variant]
+    if args.design_only and "Re_star" in feature_cols:
+        feature_cols.remove("Re_star")
+        
     print(f"Using features: {feature_cols}")
     
     # Split
     train_idx = split['train']
     test_idx = split['test']
     
-    df_train = df.iloc[train_idx]
-    df_test = df.iloc[test_idx]
+    if args.design_only:
+        design_set = set(design_indices)
+        train_idx = [i for i in train_idx if i in design_set]
+        test_idx = [i for i in test_idx if i in design_set]
+        print(f"Filtered split sizes: Train={len(train_idx)}, Test={len(test_idx)}")
+    
+    df_train = df.loc[train_idx]
+    df_test = df.loc[test_idx]
     
     # 1. Train Galloping GP ROM
     print("Training Galloping GP ROM...")

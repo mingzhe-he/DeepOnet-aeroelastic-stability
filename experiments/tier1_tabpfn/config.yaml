@@ -1,0 +1,21 @@
+data_path: "data/processed/summary.parquet"
+split_path: "data/splits/aoa_interpolation.json"
+output_dir: "experiments/tier1_tabpfn/results"
+device: "auto"
+
+features:
+  mandatory:
+    - "H_over_D"
+    - "aoa0_rad"
+    # - "Re_star" # TabPFN handles features well, but we might exclude Re for design-only
+
+targets:
+  - "mean_Cl"
+  - "mean_Cd"
+  - "St_peak"
+  - "mean_Cm"
+  - "A_peak"
+
+training:
+  batch_size: 1024 # Not used for TabPFN really
+  N_ensemble_configurations: 3 # TabPFN parameter

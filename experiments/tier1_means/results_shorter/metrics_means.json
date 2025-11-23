@@ -1,0 +1,64 @@
+{
+  "metrics": {
+    "mean_Cl": {
+      "R2": 0.7525639533996582,
+      "RMSE": 2.0430625762692043,
+      "MAE": 1.6772745847702026
+    },
+    "mean_Cd": {
+      "R2": 0.3365921378135681,
+      "RMSE": 1.092681853655679,
+      "MAE": 0.9733647704124451
+    },
+    "mean_Cm": {
+      "R2": -0.3173924684524536,
+      "RMSE": 1.0582425706847292,
+      "MAE": 0.7733956575393677
+    }
+  },
+  "config": {
+    "data_path": "data/processed/summary.parquet",
+    "split_path": "data/splits/aoa_interpolation.json",
+    "output_dir": "experiments/tier1_means/results",
+    "device": "auto",
+    "features": {
+      "geometry": [
+        "H_over_D"
+      ],
+      "use_polynomial": true
+    },
+    "targets": [
+      "mean_Cl",
+      "mean_Cd",
+      "mean_Cm"
+    ],
+    "model": {
+      "n_models": 3,
+      "hidden_dims": [
+        64,
+        64
+      ],
+      "activation": "relu",
+      "dropout": 0.1,
+      "use_batch_norm": true
+    },
+    "training": {
+      "batch_size": 32,
+      "learning_rate": 0.001,
+      "weight_decay": 0.0005,
+      "epochs": 1000,
+      "patience": 100,
+      "loss_weighting": "inverse_variance"
+    }
+  },
+  "feature_cols": [
+    "H_over_D",
+    "H_over_D_sq",
+    "aoa0_rad"
+  ],
+  "target_cols": [
+    "mean_Cl",
+    "mean_Cd",
+    "mean_Cm"
+  ]
+}

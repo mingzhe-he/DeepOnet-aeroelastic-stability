@@ -15,7 +15,7 @@ class SheddingRegimeModel:
     2. Trains a classifier to predict regime from Features.
     3. Trains a regressor per regime to predict St from Features.
     """
-    def __init__(self, n_regimes=2, classifier=None, regressor_type="gp", random_state=42):
+    def __init__(self, n_regimes=1, classifier=None, regressor_type="gp", random_state=42):
         self.n_regimes = n_regimes
         self.random_state = random_state
         
@@ -37,9 +37,26 @@ class SheddingRegimeModel:
             X: Input features (n_samples, n_features)
             y: Strouhal number targets
         """
-        # Scale features for clustering
+        # Scale features
         X_scaled = self.scaler.fit_transform(X)
         
+        if self.n_regimes == 1:
+            # Single regime mode
+            if self.regressor_type == "gp":
+                n_features = X.shape[1]
+                kernel = C(1.0, (1e-2, 1e2)) * RBF(length_scale=[1.0]*n_features, length_scale_bounds=(1e-2, 1e2)) \
+                         + WhiteKernel(noise_level=1e-4, noise_level_bounds=(1e-8, 1e-1))
+                reg = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=5, normalize_y=True, random_state=self.random_state)
+            elif self.regressor_type == "ridge":
+                reg = Ridge(alpha=1.0)
+            else:
+                raise ValueError(f"Unknown regressor type: {self.regressor_type}")
+                
+            reg.fit(X_scaled, y)
+            self.regressors[0] = reg
+            return self
+            
+        # Multi-regime mode
         # Cluster in (X, y) space to find regimes
         # We weight y to ensure it influences clustering
         y_scaled = (y - y.mean()) / y.std()
@@ -49,20 +66,21 @@ class SheddingRegimeModel:
         labels = self.kmeans.labels_
         
         # Train classifier: X -> Regime
-        self.classifier.fit(X, labels)
+        self.classifier.fit(X_scaled, labels)
         
         # Train per-regime regressors
         for r in range(self.n_regimes):
             mask = labels == r
             if np.sum(mask) < 2:
-                # Not enough data, use global fallback or skip
                 continue
                 
-            X_r = X[mask]
+            X_r = X_scaled[mask]
             y_r = y[mask]
             
             if self.regressor_type == "gp":
-                kernel = C(1.0) * RBF(length_scale=1.0) + WhiteKernel(noise_level=1e-5)
+                n_features = X.shape[1]
+                kernel = C(1.0, (1e-2, 1e2)) * RBF(length_scale=[1.0]*n_features, length_scale_bounds=(1e-2, 1e2)) \
+                         + WhiteKernel(noise_level=1e-4, noise_level_bounds=(1e-8, 1e-1))
                 reg = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=5, normalize_y=True, random_state=self.random_state)
             elif self.regressor_type == "ridge":
                 reg = Ridge(alpha=1.0)
@@ -78,8 +96,13 @@ class SheddingRegimeModel:
         """
         Predict Strouhal number.
         """
+        X_scaled = self.scaler.transform(X)
+        
+        if self.n_regimes == 1:
+            return self.regressors[0].predict(X_scaled)
+            
         # Predict regime
-        regimes = self.classifier.predict(X)
+        regimes = self.classifier.predict(X_scaled)
         
         y_pred = np.zeros(X.shape[0])
         
@@ -87,9 +110,8 @@ class SheddingRegimeModel:
             mask = regimes == r
             if np.sum(mask) > 0:
                 if r in self.regressors:
-                    y_pred[mask] = self.regressors[r].predict(X[mask])
+                    y_pred[mask] = self.regressors[r].predict(X_scaled[mask])
                 else:
-                    # Fallback if regime has no regressor (shouldn't happen if trained well)
                     y_pred[mask] = np.nan 
                     
         return y_pred

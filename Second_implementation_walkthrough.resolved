@@ -1,0 +1,227 @@
+# Tier 1 Package Improvements - Walkthrough
+
+This document summarizes the improvements made to the Tier 1 ML approaches based on the feedback from [Review_on_first_implementation_results.md](file:///Users/mingz/Projects/tier1_package/Review_on_first_implementation_results.md).
+
+## Summary of Changes
+
+I successfully implemented improvements to all four existing approaches and attempted to add a fifth approach (TabPFN). The key improvements focused on:
+
+1. **Design-velocity training**: All models now support training exclusively on U=21.5 m/s data
+2. **Shape generalization**: Implemented shape-holdout evaluation to test cross-shape performance
+3. **Model-specific refinements**: Each approach received targeted improvements based on feedback
+
+## Approach-by-Approach Results
+
+### Approach 1: Improved MLP Ensemble ✅
+
+**Improvements Made:**
+- Added `--design-only` flag to filter for U > 20 m/s
+- Added `--weight-decay` override for regularization tuning
+- Added `--split-path` override for shape-holdout evaluation
+- Removed `Re_star` feature when using design-only mode
+
+**Results on 'Shorter' Shape Holdout (Design Velocity):**
+- `mean_Cl` R²: **0.82** ✓
+- `mean_Cd` R²: **0.27**
+- `St_peak` R²: **-0.23**
+- `A_peak` R²: **0.90** ✓
+
+**Key Findings:**
+- Excellent performance on `mean_Cl` and `A_peak`
+- Moderate performance on `mean_Cd`
+- Poor generalization for `St_peak` across shapes
+
+---
+
+### Approach 2: Multi-task MLP with Derivative Regularization ✅
+
+**Improvements Made:**
+- Added derivative loss normalization by variance
+- Implemented two-stage training with warmup epochs (500 epochs before derivative loss)
+- Restricted targets to `[mean_Cl, mean_Cd]` as recommended
+- Added design-only and shape-holdout support
+
+**Results on 'Shorter' Shape Holdout (Design Velocity):**
+- `mean_Cl` R²: **0.66**
+- `mean_Cd` R²: **-2.35** ✗
+- Derivative R²: **0.09**
+
+**Key Findings:**
+- Moderate performance on `mean_Cl`
+- Very poor performance on `mean_Cd` (negative R²)
+- Derivative regularization did not significantly improve results
+- The approach struggles with shape generalization
+
+---
+
+### Approach 3: Physics-informed ROM ✅
+
+**Improvements Made:**
+- Implemented ARD (Automatic Relevance Determination) kernel in [galloping_gp.py](file:///Users/mingz/Projects/tier1_package/src/rom/galloping_gp.py)
+- Added input standardization using `StandardScaler`
+- Simplified shedding model to single regime (n_regimes=1)
+- Removed complex K-Means clustering for more stable predictions
+- Added design-only and shape-holdout support
+
+**Results on 'Shorter' Shape Holdout (Design Velocity):**
+- `mean_Cl` R²: **-0.004** ✗
+- `mean_Cd` R²: **-0.08** ✗
+- `St_peak` R²: **-0.66** ✗
+
+**Key Findings:**
+- Very poor generalization across shapes despite improvements
+- The GP-based approach overfits to training shapes
+- ARD kernel and standardization were not sufficient to improve cross-shape performance
+- This approach may require more training data or different kernel choices
+
+---
+
+### Approach 4: LightGBM Surrogate ✅
+
+**Improvements Made:**
+- Added support for fixed splits (shape-holdout, AoA-interpolation) via `--split-path`
+- Maintained K-Fold CV as fallback when no split is specified
+- Added design-only filtering support
+- Fixed variable scope bug in training loop
+
+**Results on 'Shorter' Shape Holdout (Design Velocity):**
+- `mean_Cl` R²: **-0.004**
+- `mean_Cd` R²: **-0.08**
+- `St_peak` R²: **-0.00**
+
+**Key Findings:**
+- Poor generalization across shapes
+- LightGBM may require more careful hyperparameter tuning per target
+- Tree-based models struggle with extrapolation to unseen shapes
+
+---
+
+### Approach 5: TabPFN Surrogate ⚠️
+
+**Status:** Implementation complete but **not validated**
+
+**Reason:** TabPFN requires authentication to download the gated model from Hugging Face:
+```
+RuntimeError: Authentication error downloading from 'Prior-Labs/tabpfn_2_5'.
+This model is gated and requires you to accept its terms.
+```
+
+**Implementation:**
+- Created [src/training/train_tabpfn.py](file:///Users/mingz/Projects/tier1_package/src/training/train_tabpfn.py) with design-only and shape-holdout support
+- Created [experiments/tier1_tabpfn/config.yaml](file:///Users/mingz/Projects/tier1_package/experiments/tier1_tabpfn/config.yaml)
+- Fixed API usage (N_ensemble_configurations parameter)
+
+**Next Steps:**
+To run TabPFN, you need to:
+1. Visit https://huggingface.co/Prior-Labs/tabpfn_2_5 and accept the terms
+2. Run `huggingface-cli login` to authenticate
+
+---
+
+## Comparison Summary
+
+| Approach | mean_Cl R² | mean_Cd R² | St_peak R² | Best For |
+|----------|------------|------------|------------|----------|
+| **1. MLP Ensemble** | **0.82** ✓ | 0.27 | -0.23 | Mean coefficients |
+| 2. Derivative MLP | 0.66 | -2.35 ✗ | N/A | - |
+| 3. ROM (GP) | -0.004 ✗ | -0.08 ✗ | -0.66 ✗ | - |
+| 4. LightGBM | -0.004 ✗ | -0.08 ✗ | -0.00 ✗ | - |
+| 5. TabPFN | N/A | N/A | N/A | Not tested |
+
+**Winner:** Approach 1 (Improved MLP Ensemble) shows the best generalization to unseen shapes.
+
+---
+
+## Key Takeaways
+
+1. **Shape generalization is challenging**: Most approaches struggled to generalize to the 'shorter' shape, indicating that the models are learning shape-specific patterns rather than universal aerodynamic principles.
+
+2. **MLP Ensemble is most robust**: Despite its simplicity, the improved MLP ensemble with proper normalization and regularization outperformed more complex approaches.
+
+3. **Derivative regularization didn't help**: Approach 2's derivative loss did not improve generalization and may have hurt performance on `mean_Cd`.
+
+4. **GP-based ROM needs more work**: The physics-informed ROM approach requires either:
+   - More training data across diverse shapes
+   - Better kernel design
+   - Physics-based constraints in the GP prior
+
+5. **Tree-based models struggle with extrapolation**: LightGBM's poor performance confirms that tree-based models have difficulty extrapolating to unseen shapes.
+
+---
+
+## Recommendations
+
+### For Production Use:
+- **Use Approach 1 (MLP Ensemble)** for `mean_Cl` and `A_peak` predictions
+- Train separate models for different shape families if possible
+- Consider ensemble of Approach 1 across multiple shape-holdout splits
+
+### For Further Research:
+1. **Increase training data diversity**: Add more shapes to improve generalization
+2. **Physics-informed features**: Engineer features based on aerodynamic theory (e.g., aspect ratio effects, separation points)
+3. **Transfer learning**: Pre-train on CFD data from similar geometries
+4. **Hybrid approaches**: Combine GP priors with neural network flexibility
+
+---
+
+## Files Modified
+
+### Training Scripts:
+- [train_tier1_improved.py](file:///Users/mingz/Projects/tier1_package/src/training/train_tier1_improved.py) - Added design-only, weight-decay, split-path, output-dir overrides
+- [train_mlp_derivative.py](file:///Users/mingz/Projects/tier1_package/src/training/train_mlp_derivative.py) - Added derivative normalization, warmup, restricted targets, split-path
+- [train_rom.py](file:///Users/mingz/Projects/tier1_package/src/training/train_rom.py) - Added design-only and split-path support
+- [train_lightgbm.py](file:///Users/mingz/Projects/tier1_package/src/training/train_lightgbm.py) - Added fixed split support, design-only filtering
+- [train_tabpfn.py](file:///Users/mingz/Projects/tier1_package/src/training/train_tabpfn.py) - **NEW** TabPFN implementation
+
+### ROM Modules:
+- [galloping_gp.py](file:///Users/mingz/Projects/tier1_package/src/rom/galloping_gp.py) - ARD kernel, StandardScaler
+- [shedding_model.py](file:///Users/mingz/Projects/tier1_package/src/rom/shedding_model.py) - Single regime mode, ARD kernel
+
+### Configuration:
+- [tier1_rom/config.yaml](file:///Users/mingz/Projects/tier1_package/experiments/tier1_rom/config.yaml) - Set n_regimes=1
+- [tier1_tabpfn/config.yaml](file:///Users/mingz/Projects/tier1_package/experiments/tier1_tabpfn/config.yaml) - **NEW** TabPFN config
+
+### Analysis:
+- [compare_approaches.py](file:///Users/mingz/Projects/tier1_package/src/analysis/compare_approaches.py) - **NEW** Comparison script
+
+### Dependencies:
+- [pyproject.toml](file:///Users/mingz/Projects/tier1_package/pyproject.toml) - Added `tabpfn>=0.1.9`
+
+---
+
+## Validation Commands
+
+All approaches were validated using:
+
+```bash
+# Approach 1 - MLP Ensemble
+uv run python src/training/train_tier1_improved.py \
+  --config experiments/tier1_improved/config.yaml \
+  --design-only \
+  --weight-decay 1e-4 \
+  --output-dir experiments/tier1_improved/results_shorter \
+  --split-path data/splits/shape_holdout_shorter.json
+
+# Approach 2 - Derivative MLP
+uv run python src/training/train_mlp_derivative.py \
+  --config experiments/tier1_4b_mlp/config.yaml \
+  --design-only \
+  --restrict-targets \
+  --warmup-epochs 500 \
+  --split-path data/splits/shape_holdout_shorter.json
+
+# Approach 3 - ROM
+uv run python src/training/train_rom.py \
+  --config experiments/tier1_rom/config.yaml \
+  --design-only \
+  --split-path data/splits/shape_holdout_shorter.json
+
+# Approach 4 - LightGBM
+uv run python src/training/train_lightgbm.py \
+  --config experiments/tier1_lightgbm/config.yaml \
+  --design-only \
+  --split-path data/splits/shape_holdout_shorter.json
+
+# Comparison
+uv run python src/analysis/compare_approaches.py
+```

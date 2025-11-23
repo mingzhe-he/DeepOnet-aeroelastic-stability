@@ -44,7 +44,8 @@ def compute_finite_difference_derivatives(df, target_col, wrt_col, group_col='sh
 
 def train_model_with_derivative(
     model, train_loader, val_loader, optimizer, device, epochs, patience,
-    lambda_deriv, lambda_curvature, x_normalizer, wrt_idx, target_idx
+    lambda_deriv, lambda_curvature, x_normalizer, wrt_idx, target_idx,
+    warmup_epochs=0, deriv_std=1.0
 ):
     best_val_loss = float('inf')
     patience_counter = 0
@@ -103,7 +104,12 @@ def train_model_with_derivative(
             deriv_loss = criterion(dY_dX_phys, deriv_batch)
             
             # Total loss
-            loss = reg_loss + lambda_deriv * deriv_loss
+            current_lambda = 0.0 if epoch < warmup_epochs else lambda_deriv
+            
+            # Normalize derivative loss by variance
+            norm_deriv_loss = deriv_loss / (deriv_std**2 + 1e-8)
+            
+            loss = reg_loss + current_lambda * norm_deriv_loss
             
             loss.backward()
             optimizer.step()
@@ -168,6 +174,10 @@ def train_model_with_derivative(
 def main():
     parser = argparse.ArgumentParser(description="Train Tier 1 MLP with Derivative")
     parser.add_argument("--config", type=str, required=True, help="Path to config yaml")
+    parser.add_argument("--design-only", action="store_true", help="Train only on design velocity")
+    parser.add_argument("--restrict-targets", action="store_true", help="Restrict to mean_Cl and mean_Cd")
+    parser.add_argument("--warmup-epochs", type=int, default=0, help="Epochs before enabling derivative loss")
+    parser.add_argument("--split-path", type=str, default=None, help="Override split path")
     args = parser.parse_args()
     
     with open(args.config, 'r') as f:
@@ -181,7 +191,17 @@ def main():
     
     # Load data
     df = pd.read_parquet(config['data_path'])
-    split = load_split(Path(config['split_path']))
+    
+    design_indices = None
+    if args.design_only:
+        print("Filtering for design velocity (U ~ 21.5 m/s)...")
+        design_indices = df[df['U_ref'] > 20.0].index.tolist()
+        print(f"Design velocity cases: {len(design_indices)}")
+        
+    if args.split_path:
+        split = load_split(Path(args.split_path))
+    else:
+        split = load_split(Path(config['split_path']))
     
     # Feature Engineering
     df['Re_star'] = np.log10(df['Re'] / 1e6)
@@ -213,7 +233,14 @@ def main():
     # Let's stick to the plan: Inputs: [H_over_D, Re_star, aoa0_rad]
     
     feature_cols = ['H_over_D', 'Re_star', 'aoa0_rad']
+    if args.design_only:
+        feature_cols = ['H_over_D', 'aoa0_rad'] # Remove Re_star for design only
+        
     target_cols = config['targets']
+    if args.restrict_targets:
+        target_cols = ['mean_Cl', 'mean_Cd']
+        if config['derivative']['target'] not in target_cols:
+             target_cols.append(config['derivative']['target'])
     
     print(f"Features: {feature_cols}")
     print(f"Targets: {target_cols}")
@@ -227,6 +254,13 @@ def main():
     train_idx = split['train']
     val_idx = split['val']
     test_idx = split['test']
+    
+    if args.design_only:
+        design_set = set(design_indices)
+        train_idx = [i for i in train_idx if i in design_set]
+        val_idx = [i for i in val_idx if i in design_set]
+        test_idx = [i for i in test_idx if i in design_set]
+        print(f"Filtered split sizes: Train={len(train_idx)}, Val={len(val_idx)}, Test={len(test_idx)}")
     
     # Normalize Inputs ONLY
     x_normalizer = FeatureNormalizer()
@@ -283,6 +317,10 @@ def main():
 
     print(f"Training with derivative reg on target idx {target_idx} w.r.t feature idx {wrt_idx}")
     
+    # Compute derivative std for normalization
+    deriv_std = deriv_train.std().item()
+    print(f"Derivative std: {deriv_std:.4f}")
+
     model, best_loss = train_model_with_derivative(
         model, train_loader, val_loader, optimizer, device,
         epochs=config['training']['epochs'],
@@ -291,7 +329,9 @@ def main():
         lambda_curvature=config['derivative']['lambda_curvature'],
         x_normalizer=x_normalizer,
         wrt_idx=wrt_idx,
-        target_idx=target_idx
+        target_idx=target_idx,
+        warmup_epochs=args.warmup_epochs,
+        deriv_std=deriv_std
     )
     
     # Evaluation

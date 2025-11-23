@@ -1,0 +1,63 @@
+{
+  "metrics": {
+    "St_peak": {
+      "R2": -0.48854541778564453,
+      "RMSE": 0.18678061246579652,
+      "MAE": 0.14060601592063904
+    },
+    "A_peak": {
+      "R2": 0.47922223806381226,
+      "RMSE": 3.0881466454783997,
+      "MAE": 1.8731974363327026
+    },
+    "log_St_peak": {
+      "R2": -0.29060089588165283
+    }
+  },
+  "config": {
+    "data_path": "data/processed/summary.parquet",
+    "split_path": "data/splits/aoa_interpolation.json",
+    "output_dir": "experiments/tier1_spectral/results",
+    "device": "auto",
+    "features": {
+      "geometry": [
+        "H_over_D"
+      ],
+      "use_polynomial": true
+    },
+    "targets": [
+      "St_peak",
+      "A_peak"
+    ],
+    "use_log_transform_st": true,
+    "model": {
+      "n_models": 3,
+      "hidden_dims": [
+        128,
+        128,
+        64
+      ],
+      "activation": "relu",
+      "dropout": 0.2,
+      "use_batch_norm": true
+    },
+    "training": {
+      "batch_size": 32,
+      "learning_rate": 0.0005,
+      "weight_decay": 0.0001,
+      "epochs": 1500,
+      "patience": 150,
+      "loss_weighting": "inverse_variance"
+    }
+  },
+  "feature_cols": [
+    "H_over_D",
+    "H_over_D_sq",
+    "aoa0_rad"
+  ],
+  "target_cols": [
+    "St_peak",
+    "A_peak"
+  ],
+  "use_log_transform": true
+}

@@ -111,51 +111,125 @@ def rescale_force_coefficients(df, metadata, shape_type, U_sim, design_U_default
     
     return df
 
-def compute_spectral_features(time, cl, settling_time=80.0):
+def compute_spectral_features(time, cl, settling_time=80.0, u_ref=21.5, d_ref=3.0):
     """
-    Computes spectral features (St, A_peak, Q, etc.) from Cl time series.
+    Computes spectral features (St, A_peak, quality metrics) from Cl time series.
+    
+    Improvements:
+    - Larger nperseg for better frequency resolution
+    - Data-driven frequency bounds (reject outliers)
+    - Robust peak detection (reject harmonics, noise)
+    - Quality metrics for each extraction
     """
     # Filter stable region
     mask = time > settling_time
     if not np.any(mask):
-        return {}
+        return {'quality_flag': 'insufficient_data'}
     
     t_stable = time[mask]
     cl_stable = cl[mask]
     
+    if len(cl_stable) < 1000:
+        return {'quality_flag': 'too_short'}
+    
     # Detrend/Center
-    cl_prime = cl_stable - np.mean(cl_stable)
+    cl_mean = np.mean(cl_stable)
+    cl_prime = cl_stable - cl_mean
     
     # Sampling parameters
-    dt = np.mean(np.diff(t_stable))
+    # Use mean instead of median since there may be many zero dts from duplicates
+    dt_vals = np.diff(t_stable)
+    # Filter out zeros
+    dt_nonzero = dt_vals[dt_vals > 0]
+    if len(dt_nonzero) == 0:
+        return {'quality_flag': 'no_valid_timesteps'}
+    dt = np.mean(dt_nonzero)  # Mean of non-zero dts
+    if dt <= 0 or not np.isfinite(dt):
+        return {'quality_flag': 'invalid_timestep'}
     fs = 1.0 / dt
     
-    # Welch's PSD
-    freqs, psd = signal.welch(cl_prime, fs, nperseg=min(len(cl_prime), 4096))
+    # Welch's PSD with improved settings
+    # Use larger nperseg for better frequency resolution
+    nperseg = min(len(cl_prime), 8192)  # Increased from 4096
     
-    # Find peak (ignore low freq)
-    valid_idx = freqs > 0.05
-    if not np.any(valid_idx):
-        return {}
+    try:
+        freqs, psd = signal.welch(
+            cl_prime, 
+            fs, 
+            nperseg=nperseg,
+            window='hann',
+            noverlap=nperseg//2,
+            detrend='constant'
+        )
+    except Exception as e:
+        return {'quality_flag': f'psd_error: {str(e)}'}
     
-    f_valid = freqs[valid_idx]
-    p_valid = psd[valid_idx]
+    # Convert to Strouhal number space for filtering
+    # St = f * D / U
+    st_vals = freqs * d_ref / u_ref
     
+    # Data-driven bounds: based on observed statistics across ALL velocities
+    # From the dataset: St mean ~ 0.22, std ~ 0.10
+    # Range: [0.068, 0.545]
+    # Use mean ± 3*std but ensure we don't exclude valid data
+    # Let's use a more relaxed bound based on actual data range
+    st_min = 0.05  # Slightly below observed min of 0.068
+    st_max = 0.60  # Slightly above observed max of 0.545
+    
+    # Filter to physically plausible range
+    valid_mask = (st_vals >= st_min) & (st_vals <= st_max) & (freqs > 0.05)  # Also exclude very low frequencies
+    
+    if not np.any(valid_mask):
+        return {'quality_flag': 'no_valid_frequencies'}
+    
+    st_valid = st_vals[valid_mask]
+    f_valid = freqs[valid_mask]
+    p_valid = psd[valid_mask]
+    
+    # Find peak
     peak_idx = np.argmax(p_valid)
     freq_peak = f_valid[peak_idx]
+    st_peak = st_valid[peak_idx]
     psd_peak = p_valid[peak_idx]
     
-    # Q factor (bandwidth)
-    # Find half-power points
+    # Quality checks
+    quality_flag = 'good'
+    
+    # Check 1: Peak should be sufficiently above background
+    background_level = np.median(p_valid)
+    peak_to_background = psd_peak / (background_level + 1e-10)
+    if peak_to_background < 3.0:  # Peak should be at least 3x background
+        quality_flag = 'weak_peak'
+    
+    # Check 2: Peak should not be too broad (check bandwidth)
     half_power = psd_peak / 2.0
-    # Simple search around peak
-    # This is rough, can be improved
+    above_half = p_valid > half_power
+    bandwidth_samples = np.sum(above_half)
+    relative_bandwidth = bandwidth_samples / len(p_valid)
+    
+    if relative_bandwidth > 0.3:  # Peak is too broad
+        quality_flag = 'broad_peak'
+    
+    # Check 3: Amplitude at peak frequency
+    # RMS of Cl fluctuations at peak frequency
+    # Approximate as A_peak ~ sqrt(2 * psd_peak * df)
+    df = freqs[1] - freqs[0]
+    a_peak = np.sqrt(2 * psd_peak * df)
+    
+    # If amplitude is too small, might be noise
+    cl_rms_total = np.std(cl_prime)
+    if a_peak < 0.1 * cl_rms_total:
+        quality_flag = 'low_amplitude'
     
     return {
-        "freq_peak": freq_peak,
-        "psd_peak": psd_peak,
-        "bandwidth": 0.0, # Placeholder
-        "Q": 0.0 # Placeholder
+        'freq_peak': freq_peak,
+        'st_peak': st_peak,
+        'psd_peak': psd_peak,
+        'A_peak': a_peak,
+        'peak_to_background': peak_to_background,
+        'relative_bandwidth': relative_bandwidth,
+        'quality_flag': quality_flag,
+        'cl_rms': cl_rms_total,
     }
 
 def process_case(case_path, settling_time=80.0):
@@ -164,17 +238,25 @@ def process_case(case_path, settling_time=80.0):
     """
     path_obj = Path(case_path)
     # Expected structure: .../{shape_variant}/{AoA}/postProcessing/cylinder/0/forceCoeffs.dat
+    # So we go up: 0 -> cylinder -> postProcessing -> AoA -> shape
     
     try:
-        aoa_dir = path_obj.parent.parent.parent.name
-        shape_dir = path_obj.parent.parent.parent.parent.name
+        # Go up from forceCoeffs.dat: 0 -> cylinder -> postProcessing -> AoA -> shape
+        # p.parent is '0', p.parent.parent is 'cylinder', etc.
+        aoa_dir = path_obj.parent.parent.parent.parent.name  # Parent[3]
+        shape_dir = path_obj.parent.parent.parent.parent.parent.name  # Parent[4]
         
         # Parse AoA
         try:
             aoa = float(aoa_dir)
         except ValueError:
             # Handle cases like "angle0" or similar if needed
-            aoa = float(re.findall(r"[-+]?\d*\.\d+|\d+", aoa_dir)[0])
+            numbers = re.findall(r"[-+]?\d*\.?\d+", aoa_dir)
+            if numbers:
+                aoa = float(numbers[0])
+            else:
+                print(f"Could not parse AoA from: {aoa_dir}")
+                return None
             
         # Parse Shape and U_sim
         # shape_dir might be "baseline", "baseline_lowU", "shorter", etc.
@@ -231,15 +313,21 @@ def process_case(case_path, settling_time=80.0):
         std_cd = df_stable['Cd'].std()
         std_cm = df_stable['Cm'].std()
         
-        # Spectral
-        spec_feats = compute_spectral_features(df['Time'].values, df['Cl'].values, settling_time)
-        
-        # Geometry
+        # Geometry (needed for spectral features)
         D = SHAPE_PARAMS[shape_base]["D"]
         H = SHAPE_PARAMS[shape_base]["H"]
+       
+        # Spectral
+        spec_feats = compute_spectral_features(
+            df['Time'].values, 
+            df['Cl'].values, 
+            settling_time,
+            u_ref=u_sim,
+            d_ref=D
+        )
         
-        # Strouhal
-        st_peak = spec_feats.get("freq_peak", np.nan) * D / u_sim
+        # Strouhal (already computed in spec_feats)
+        st_peak = spec_feats.get("st_peak", np.nan)
         
         # Re
         re_num = u_sim * D / NU_AIR
@@ -264,6 +352,10 @@ def process_case(case_path, settling_time=80.0):
             "St_peak": st_peak,
             "freq_peak": spec_feats.get("freq_peak", np.nan),
             "psd_peak": spec_feats.get("psd_peak", np.nan),
+            "A_peak": spec_feats.get("A_peak", np.nan),
+            "st_quality_flag": spec_feats.get("quality_flag", "unknown"),
+            "st_peak_to_background": spec_feats.get("peak_to_background", np.nan),
+            "st_relative_bandwidth": spec_feats.get("relative_bandwidth", np.nan),
             # Derived
             "sin_aoa": np.sin(np.radians(aoa)),
             "cos_aoa": np.cos(np.radians(aoa)),

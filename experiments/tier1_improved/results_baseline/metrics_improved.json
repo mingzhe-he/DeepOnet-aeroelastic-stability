@@ -1,0 +1,87 @@
+{
+  "metrics": {
+    "St_peak": {
+      "R2": -0.2293030023574829,
+      "RMSE": 0.08923924814403006,
+      "MAE": 0.06256695836782455
+    },
+    "mean_Cl": {
+      "R2": 0.8203141093254089,
+      "RMSE": 1.0362343985530045,
+      "MAE": 0.8681568503379822
+    },
+    "mean_Cd": {
+      "R2": 0.27456218004226685,
+      "RMSE": 0.5807851727311873,
+      "MAE": 0.44614583253860474
+    },
+    "mean_Cm": {
+      "R2": 0.14466053247451782,
+      "RMSE": 0.5278107447394574,
+      "MAE": 0.45649752020835876
+    },
+    "A_peak": {
+      "R2": 0.9033620357513428,
+      "RMSE": 0.9781681745951626,
+      "MAE": 0.8294727206230164
+    }
+  },
+  "config": {
+    "experiment_name": "tier1_improved_mlp",
+    "output_dir": "experiments/tier1_improved/results",
+    "data_path": "data/processed/summary.parquet",
+    "split_path": "data/splits/aoa_interpolation.json",
+    "features": {
+      "geometry": [
+        "H_over_D"
+      ],
+      "flow": [
+        "Re"
+      ],
+      "angle": [
+        "aoa_rad"
+      ]
+    },
+    "targets": [
+      "St_peak",
+      "mean_Cl",
+      "mean_Cd",
+      "mean_Cm",
+      "A_peak"
+    ],
+    "model": {
+      "type": "mlp_ensemble",
+      "n_models": 5,
+      "hidden_dims": [
+        128,
+        128,
+        64
+      ],
+      "dropout": 0.1,
+      "activation": "relu",
+      "use_batch_norm": true
+    },
+    "training": {
+      "batch_size": 32,
+      "epochs": 1000,
+      "learning_rate": 0.001,
+      "weight_decay": 0.0001,
+      "patience": 50,
+      "loss_weighting": "inverse_var"
+    },
+    "device": "auto"
+  },
+  "feature_cols": [
+    "H_over_D",
+    "aoa0_rad",
+    "sin_aoa",
+    "cos_aoa"
+  ],
+  "target_cols": [
+    "St_peak",
+    "mean_Cl",
+    "mean_Cd",
+    "mean_Cm",
+    "A_peak"
+  ]
+}

@@ -23,6 +23,7 @@ dependencies = [
     "ipykernel>=6.23.0",
     "notebook>=7.0.0",
     "lightgbm>=4.0.0",
+    "tabpfn>=0.1.9",
 ]
 
 [project.optional-dependencies]

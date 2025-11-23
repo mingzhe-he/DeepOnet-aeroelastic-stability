@@ -8,10 +8,13 @@ import joblib
 from pathlib import Path
 from sklearn.model_selection import KFold
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
+from src.data.splits import load_split
 
 def main():
     parser = argparse.ArgumentParser(description="Train Tier 1 LightGBM")
     parser.add_argument("--config", type=str, required=True, help="Path to config yaml")
+    parser.add_argument("--design-only", action="store_true", help="Train only on design velocity")
+    parser.add_argument("--split-path", type=str, default=None, help="Override split path")
     args = parser.parse_args()
     
     with open(args.config, 'r') as f:
@@ -46,12 +49,77 @@ def main():
     print(f"Features: {feature_cols}")
     print(f"Targets: {target_cols}")
     
-    # K-Fold CV
-    n_folds = config['training']['n_folds']
-    kf = KFold(n_splits=n_folds, shuffle=True, random_state=42)
+    # K-Fold CV or Fixed Split
+    if args.split_path:
+        print(f"Using fixed split from {args.split_path}")
+        split = load_split(Path(args.split_path))
+        
+        train_idx = split['train']
+        val_idx = split['val']
+        test_idx = split['test']
+        
+        if args.design_only:
+            print("Filtering for design velocity (U ~ 21.5 m/s)...")
+            design_indices = df[df['U_ref'] > 20.0].index.tolist()
+            design_set = set(design_indices)
+            
+            train_idx = [i for i in train_idx if i in design_set]
+            val_idx = [i for i in val_idx if i in design_set]
+            test_idx = [i for i in test_idx if i in design_set]
+            print(f"Filtered split sizes: Train={len(train_idx)}, Val={len(val_idx)}, Test={len(test_idx)}")
+            
+        # Use fixed split logic
+        metrics = {target: {"R2": 0.0, "RMSE": 0.0} for target in target_cols}
+        models = {}
+        
+        for target in target_cols:
+            print(f"\nTraining for target: {target}")
+            
+            y = df[target].values
+            X = df[feature_cols]
+            
+            X_train, X_val = X.loc[train_idx], X.loc[val_idx]
+            y_train, y_val = y[train_idx], y[val_idx]
+            X_test, y_test = X.loc[test_idx], y[test_idx]
+            
+            # LightGBM Dataset
+            train_data = lgb.Dataset(X_train, label=y_train)
+            val_data = lgb.Dataset(X_val, label=y_val, reference=train_data)
+            
+            params = config['training']['params'].copy()
+            
+            model = lgb.train(
+                params,
+                train_data,
+                valid_sets=[val_data],
+                callbacks=[lgb.early_stopping(stopping_rounds=params['early_stopping_rounds']), lgb.log_evaluation(0)]
+            )
+            
+            # Predict on TEST set for final metric
+            y_pred = model.predict(X_test, num_iteration=model.best_iteration)
+            
+            r2 = r2_score(y_test, y_pred)
+            rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+            
+            metrics[target]["R2"] = float(r2)
+            metrics[target]["RMSE"] = float(rmse)
+            models[target] = model
+            
+            print(f"  Test R2: {r2:.4f}")
+            print(f"  Test RMSE: {rmse:.4f}")
+            
+    else:
+        # K-Fold CV
+        if args.design_only:
+            print("Filtering for design velocity (U ~ 21.5 m/s) before K-Fold...")
+            df = df[df['U_ref'] > 20.0].copy().reset_index(drop=True)
+            print(f"Filtered dataset size: {len(df)}")
+            
+        n_folds = config['training']['n_folds']
+        kf = KFold(n_splits=n_folds, shuffle=True, random_state=42)
     
-    metrics = {target: {"R2": [], "RMSE": []} for target in target_cols}
-    models = {target: [] for target in target_cols}
+        metrics = {target: {"R2": [], "RMSE": []} for target in target_cols}
+        models = {target: [] for target in target_cols}
     
     # We train one model per target
     for target in target_cols:

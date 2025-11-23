@@ -1,0 +1,30 @@
+data_path: "data/processed/summary.parquet"
+split_path: "data/splits/aoa_interpolation.json"
+output_dir: "experiments/tier1_spectral/results"
+device: "auto"
+
+features:
+  geometry:
+    - "H_over_D"
+  use_polynomial: true # Adds H_over_D_sq
+
+targets:
+  - "St_peak"
+  - "A_peak"
+
+use_log_transform_st: true # Log transform for St_peak
+
+model:
+  n_models: 3
+  hidden_dims: [128, 128, 64] # Deeper for complex spectral patterns
+  activation: "relu"
+  dropout: 0.2 # More dropout for spectral quantities
+  use_batch_norm: true
+
+training:
+  batch_size: 32
+  learning_rate: 0.0005 # Slightly lower LR
+  weight_decay: 1.0e-4
+  epochs: 1500 # More epochs for deeper network
+  patience: 150
+  loss_weighting: "inverse_variance"

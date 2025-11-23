@@ -13,7 +13,7 @@ galloping_gp:
   n_restarts: 5
 
 shedding_model:
-  n_regimes: 2
+  n_regimes: 1
   classifier: "random_forest"
   regressor: "gp" # or "ridge"
 

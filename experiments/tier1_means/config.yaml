@@ -1,0 +1,29 @@
+data_path: "data/processed/summary.parquet"
+split_path: "data/splits/aoa_interpolation.json"
+output_dir: "experiments/tier1_means/results"
+device: "auto"
+
+features:
+  geometry:
+    - "H_over_D"
+  use_polynomial: true # Adds H_over_D_sq
+
+targets:
+  - "mean_Cl"
+  - "mean_Cd"
+  - "mean_Cm"
+
+model:
+  n_models: 3
+  hidden_dims: [64, 64] # Smaller architecture for better generalization
+  activation: "relu"
+  dropout: 0.1
+  use_batch_norm: true
+
+training:
+  batch_size: 32
+  learning_rate: 0.001
+  weight_decay: 5.0e-4 # Higher regularization for shape generalization
+  epochs: 1000
+  patience: 100
+  loss_weighting: "inverse_variance"

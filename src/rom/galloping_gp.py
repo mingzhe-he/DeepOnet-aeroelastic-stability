@@ -2,28 +2,20 @@ import numpy as np
 import pandas as pd
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, WhiteKernel, ConstantKernel as C
+from sklearn.preprocessing import StandardScaler
 
 class GallopingGPROM:
     """
     Gaussian Process ROM for mean force coefficients and Den Hartog criterion.
     """
     def __init__(self, kernel=None, n_restarts_optimizer=5, random_state=42):
-        if kernel is None:
-            # Default kernel: Constant * RBF + Noise
-            kernel = C(1.0) * RBF(length_scale=1.0) + WhiteKernel(noise_level=1e-5)
-            
-        self.gp_cl = GaussianProcessRegressor(
-            kernel=kernel,
-            n_restarts_optimizer=n_restarts_optimizer,
-            normalize_y=True,
-            random_state=random_state
-        )
-        self.gp_cd = GaussianProcessRegressor(
-            kernel=kernel,
-            n_restarts_optimizer=n_restarts_optimizer,
-            normalize_y=True,
-            random_state=random_state
-        )
+        self.kernel_template = kernel
+        self.n_restarts_optimizer = n_restarts_optimizer
+        self.random_state = random_state
+        
+        self.gp_cl = None
+        self.gp_cd = None
+        self.scaler = StandardScaler()
         self.feature_cols = None
         
     def fit(self, X, y_cl, y_cd):
@@ -35,8 +27,33 @@ class GallopingGPROM:
             y_cl: Mean Cl targets
             y_cd: Mean Cd targets
         """
-        self.gp_cl.fit(X, y_cl)
-        self.gp_cd.fit(X, y_cd)
+        # Standardize X
+        X_scaled = self.scaler.fit_transform(X)
+        
+        # Create kernel with ARD if not provided
+        if self.kernel_template is None:
+            n_features = X.shape[1]
+            # ARD kernel: separate length scale for each feature
+            kernel = C(1.0, (1e-2, 1e2)) * RBF(length_scale=[1.0]*n_features, length_scale_bounds=(1e-2, 1e2)) \
+                     + WhiteKernel(noise_level=1e-4, noise_level_bounds=(1e-8, 1e-1))
+        else:
+            kernel = self.kernel_template
+            
+        self.gp_cl = GaussianProcessRegressor(
+            kernel=kernel,
+            n_restarts_optimizer=self.n_restarts_optimizer,
+            normalize_y=True,
+            random_state=self.random_state
+        )
+        self.gp_cd = GaussianProcessRegressor(
+            kernel=kernel,
+            n_restarts_optimizer=self.n_restarts_optimizer,
+            normalize_y=True,
+            random_state=self.random_state
+        )
+        
+        self.gp_cl.fit(X_scaled, y_cl)
+        self.gp_cd.fit(X_scaled, y_cd)
         return self
         
     def from_dataframe(self, df, feature_cols, cl_col="mean_Cl", cd_col="mean_Cd"):
@@ -55,13 +72,15 @@ class GallopingGPROM:
         """
         Predict mean Cl and Cd.
         """
+        X_scaled = self.scaler.transform(X)
+        
         if return_std:
-            cl_pred, cl_std = self.gp_cl.predict(X, return_std=True)
-            cd_pred, cd_std = self.gp_cd.predict(X, return_std=True)
+            cl_pred, cl_std = self.gp_cl.predict(X_scaled, return_std=True)
+            cd_pred, cd_std = self.gp_cd.predict(X_scaled, return_std=True)
             return (cl_pred, cd_pred), (cl_std, cd_std)
         else:
-            cl_pred = self.gp_cl.predict(X)
-            cd_pred = self.gp_cd.predict(X)
+            cl_pred = self.gp_cl.predict(X_scaled)
+            cd_pred = self.gp_cd.predict(X_scaled)
             return cl_pred, cd_pred
             
     def estimate_derivative_and_den_hartog(self, X, aoa_idx, delta_deg=0.1):
@@ -86,8 +105,9 @@ class GallopingGPROM:
         X_minus[:, aoa_idx] -= delta_rad
         
         # Predict
-        cl_plus = self.gp_cl.predict(X_plus)
-        cl_minus = self.gp_cl.predict(X_minus)
+        # Predict (internally handles scaling)
+        cl_plus = self.predict(X_plus)[0]
+        cl_minus = self.predict(X_minus)[0]
         
         # Central difference
         dCl_dAlpha = (cl_plus - cl_minus) / (2 * delta_rad)

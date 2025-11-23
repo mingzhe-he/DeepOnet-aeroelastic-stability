@@ -7,12 +7,9 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from pathlib import Path
-from tqdm import tqdm
-from copy import deepcopy
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 
 from src.models.mlp_scalar import MLPScalarSurrogate, get_device, FeatureNormalizer
-# from src.data.features import FeatureNormalizer
 from src.data.splits import load_split
 
 def set_seed(seed):
@@ -21,80 +18,61 @@ def set_seed(seed):
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
 
-def compute_target_weights(y_train, method="inverse_var"):
-    """
-    Compute weights for each target to balance the loss.
-    """
-    if method == "none":
-        return torch.ones(y_train.shape[1])
-    elif method == "inverse_var":
-        # Inverse variance weighting
-        vars = torch.var(y_train, dim=0)
-        # Avoid division by zero
-        vars = torch.where(vars > 1e-8, vars, torch.ones_like(vars))
-        weights = 1.0 / vars
-        # Normalize to mean 1
-        weights = weights / weights.mean()
-        return weights
-    elif method == "manual":
-        # Placeholder for manual weights if needed
-        return torch.ones(y_train.shape[1])
+def compute_target_weights(y_train_norm, method="inverse_variance"):
+    """Compute per-target loss weights."""
+    if method == "inverse_variance":
+        variances = torch.var(y_train_norm, dim=0)
+        weights = 1.0 / (variances + 1e-8)
+        weights = weights / weights.sum() * len(weights)
+    elif method == "uniform":
+        weights = torch.ones(y_train_norm.shape[1])
     else:
         raise ValueError(f"Unknown weighting method: {method}")
+    return weights
 
-def train_one_model(model, train_loader, val_loader, criterion, optimizer, device, epochs, patience, weights=None):
+def train_one_model(model, train_loader, val_loader, criterion, optimizer, device, epochs=1000, patience=50, weights=None):
+    """Train a single model with early stopping."""
     best_val_loss = float('inf')
     patience_counter = 0
-    best_state = None
     
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=patience//2)
-    
-    if weights is not None:
-        weights = weights.to(device)
-
     for epoch in range(epochs):
-        # Train
         model.train()
         train_loss = 0.0
         for X_batch, y_batch in train_loader:
-            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+            X_batch = X_batch.to(device)
+            y_batch = y_batch.to(device)
             
             optimizer.zero_grad()
             y_pred = model(X_batch)
             
             if weights is not None:
-                loss = torch.mean(weights * (y_pred - y_batch)**2)
+                loss = ((y_pred - y_batch)**2 * weights.to(device)).mean()
             else:
                 loss = criterion(y_pred, y_batch)
-                
+            
             loss.backward()
             optimizer.step()
-            train_loss += loss.item() * X_batch.size(0)
-            
-        train_loss /= len(train_loader.dataset)
+            train_loss += loss.item()
         
-        # Val
+        # Validation
         model.eval()
         val_loss = 0.0
         with torch.no_grad():
             for X_batch, y_batch in val_loader:
-                X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+                X_batch = X_batch.to(device)
+                y_batch = y_batch.to(device)
                 y_pred = model(X_batch)
                 
                 if weights is not None:
-                    loss = torch.mean(weights * (y_pred - y_batch)**2)
+                    loss = ((y_pred - y_batch)**2 * weights.to(device)).mean()
                 else:
                     loss = criterion(y_pred, y_batch)
-                
-                val_loss += loss.item() * X_batch.size(0)
-                
-        val_loss /= len(val_loader.dataset)
+                val_loss += loss.item()
         
-        scheduler.step(val_loss)
+        val_loss /= len(val_loader)
         
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            best_state = deepcopy(model.state_dict())
             patience_counter = 0
         else:
             patience_counter += 1
@@ -102,18 +80,17 @@ def train_one_model(model, train_loader, val_loader, criterion, optimizer, devic
         if patience_counter >= patience:
             break
             
-    model.load_state_dict(best_state)
     return model, best_val_loss
 
 def main():
-    parser = argparse.ArgumentParser(description="Train Tier 1 Improved MLP Ensemble")
+    parser = argparse.ArgumentParser(description="Train Tier 1 Means Model")
     parser.add_argument("--config", type=str, required=True, help="Path to config yaml")
     parser.add_argument("--design-only", action="store_true", help="Train only on design velocity (U=21.5)")
     parser.add_argument("--weight-decay", type=float, default=None, help="Override weight decay")
     parser.add_argument("--output-dir", type=str, default=None, help="Override output directory")
     parser.add_argument("--split-path", type=str, default=None, help="Override split path")
     args = parser.parse_args()
-    
+
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
         
@@ -135,19 +112,15 @@ def main():
         split = load_split(Path(config['split_path']))
     
     # Feature Engineering
-    # H_over_D is already in df
-    # Re -> Re_star
     df['Re_star'] = np.log10(df['Re'] / 1e6)
     
     design_indices = None
     if args.design_only:
         print("Filtering for design velocity (U ~ 21.5 m/s)...")
-        # Identify indices
         design_indices = df[df['U_ref'] > 20.0].index.tolist()
         print(f"Design velocity cases: {len(design_indices)}")
     
     # AoA features
-    # Ensure aoa_rad is present
     if 'aoa_rad' not in df.columns:
         df['aoa_rad'] = np.radians(df['aoa'])
         
@@ -155,16 +128,21 @@ def main():
     df['sin_aoa'] = np.sin(df['aoa_rad'])
     df['cos_aoa'] = np.cos(df['aoa_rad'])
     
+    # Polynomial shape features
+    df['H_over_D_sq'] = df['H_over_D'] ** 2
+    
     # Select features and targets
     feature_cols = []
     feature_cols.extend(config['features']['geometry'])
-    if not args.design_only:
-        feature_cols.append('Re_star') # Only include Re_star if not design-only
-    feature_cols.append('aoa0_rad')
-    feature_cols.append('sin_aoa')
-    feature_cols.append('cos_aoa')
+    # Add polynomial feature
+    if 'H_over_D_sq' in df.columns and config['features'].get('use_polynomial', True):
+        feature_cols.append('H_over_D_sq')
     
-    target_cols = config['targets']
+    if not args.design_only:
+        feature_cols.append('Re_star')
+    feature_cols.append('aoa0_rad')
+    
+    target_cols = config['targets']  # Should be ['mean_Cl', 'mean_Cd', 'mean_Cm']
     
     print(f"Features: {feature_cols}")
     print(f"Targets: {target_cols}")
@@ -179,7 +157,6 @@ def main():
     test_idx = split['test']
     
     if args.design_only:
-        # Intersect
         design_set = set(design_indices)
         train_idx = [i for i in train_idx if i in design_set]
         val_idx = [i for i in val_idx if i in design_set]
@@ -201,7 +178,7 @@ def main():
     y_val_norm = y_normalizer.transform(y_val)
     
     X_test_norm = x_normalizer.transform(X_test)
-    y_test_norm = y_normalizer.transform(y_test) # Just for consistency, though we evaluate on physical units usually
+    y_test_norm = y_normalizer.transform(y_test)
     
     # Dataloaders
     batch_size = config['training']['batch_size']
@@ -288,7 +265,7 @@ def main():
         "target_cols": target_cols
     }
     
-    with open(output_dir / "metrics_improved.json", 'w') as f:
+    with open(output_dir / "metrics_means.json", 'w') as f:
         json.dump(results, f, indent=2, cls=json.JSONEncoder)
         
     # Save models and normalizers
@@ -298,7 +275,7 @@ def main():
         "y_normalizer": y_normalizer.state_dict(),
         "feature_cols": feature_cols,
         "target_cols": target_cols
-    }, output_dir / "ensemble_improved_metadata.pt")
+    }, output_dir / "ensemble_means.pt")
     
     print(f"Results saved to {output_dir}")
 
